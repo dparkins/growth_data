@@ -35,7 +35,7 @@ implicit none
   real, parameter    :: matter_power_minkh =  0.999e-4  !1e-4 !minimum value of k/h to store
   real, parameter    :: matter_power_dlnkh = 0.143911568    !log spacing in k/h
   real, parameter    :: matter_power_maxz = 6.0    !6.0
-  integer, parameter :: matter_power_lnzsteps =  2200 
+  integer, parameter :: matter_power_lnzsteps =  20 
 #else
   integer, parameter :: num_matter_power = 74 !number of points computed in matter power spectrum
   real, parameter    :: matter_power_minkh =  0.999e-4  !1e-4 !minimum value of k/h to store

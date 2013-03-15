@@ -10,11 +10,12 @@ module growth_module
   implicit none
 
   logical :: Use_growth = .false.
-  integer, parameter :: WigglezbinN = 4
+  integer, parameter :: GrowthbinN = 6
+  integer, parameter :: All_the_bins = 20
   real(dl), parameter :: Pi_num = 3.14159265359D0 
-  real(dl) :: growth_z(14), growth_fsig8(WigglezbinN), growth_diagerr(WigglezbinN)
-  real(dl) :: growth_AP_F(WigglezbinN), growth_AP_F_diagerr(WigglezbinN), fsig8_AP_corr(WigglezbinN)
-  real(dl) :: growth_Ninv(WigglezbinN,WigglezbinN), growth_Ninvmarge(WigglezbinN,WigglezbinN)
+  real(dl) :: growth_z(All_the_bins), growth_fsig8(GrowthbinN), growth_diagerr(GrowthbinN)
+  real(dl) :: growth_AP_F(GrowthbinN), growth_AP_F_diagerr(GrowthbinN), fsig8_AP_corr(GrowthbinN)
+  real(dl) :: growth_Ninv(GrowthbinN,GrowthbinN), growth_Ninvmarge(GrowthbinN,GrowthbinN)
   real(dl) :: growth_z_eps
   logical, save :: do_growth_init = .true.
   real(dl) :: omegam_0, omegak_0, omegav_0, w0
@@ -31,29 +32,34 @@ contains
    
     if(Use_growth.and.matter_power_lnzsteps<13) & 
          call MpiStop('For growth matter_power_lnzsteps should be set to at least 13 (hardcoded in cmbtypes)')
-    growth_z(1) = 0.d0
+    growth_z(1) = 0.d0 ! this is always true
     if(matter_power_lnzsteps==1 .or. .not. use_growth) return
-    do i=1,4
+    do i=1,GrowthbinN
        j = 3*i
        if(i.eq.1) then
-          growth_z(j) = 0.22
+          growth_z(j) = 0.067
        else if(i.eq.2) then
-          growth_z(j) = 0.41
+          growth_z(j) = 0.22
        else if(i.eq.3) then
-          growth_z(j) = 0.60
+          growth_z(j) = 0.41
        else if(i.eq.4) then
+          growth_z(j) = 0.57
+       else if(i.eq.5) then
+          growth_z(j) = 0.6
+       else if(i.eq.6) then
           growth_z(j) = 0.78
        endif
        growth_z_eps = 1.d-2*growth_z(j)
        growth_z(j-1) = growth_z(j)-growth_z_eps
        growth_z(j+1) = growth_z(j)+growth_z_eps
-       if(i.eq.4) growth_z(j+2) = growth_z(j+1)+growth_z_eps
+       if(i.eq.GrowthbinN) growth_z(j+2) = growth_z(j+1)+growth_z_eps
     enddo
-    do i=1,14
+    do i=1,All_the_bins
        print*, i, growth_z(i)
     enddo
     If (Feedback > 0) print*, 'Seting Transfer Redshifts'
     redshifts(1:matter_power_lnzsteps) = growth_z(1:matter_power_lnzsteps)
+    If (Feedback > 0) print*, 'Set Transfer Redshifts'
     return
 
   end subroutine growth_SetTransferRedshifts
@@ -66,20 +72,21 @@ contains
    character(len=32) dum_char
    integer i, num_redshifts_initial
 !   real(dl) growth_ADD_func, growth_H_func
-!   real(dl) growth_ADD_func, growth_H_func
+
 
    if (Feedback > 0) write (*,*) 'reading: growth data'
-   call OpenTxtFile('data/cb_growth.dat',tmp_file_unit)
+   call OpenTxtFile('data/combined_growth.dat',tmp_file_unit)
    read(tmp_file_unit,*) dum_char
-   do i=1,WigglezbinN
+   do i=1,GrowthbinN
       read(tmp_file_unit, *) dum, growth_fsig8(i), growth_diagerr(i), growth_AP_F(i),&
-          growth_AP_F_diagerr(i), fsig8_AP_corr(i)
+          growth_AP_F_diagerr(i), fsig8_AP_corr(i), dum_char
 
       growth_diagerr(i)=growth_diagerr(i)**2
       growth_AP_F_diagerr(i)=growth_AP_F_diagerr(i)**2
    end do
    close(tmp_file_unit)
-   
+
+  
    do_growth_init = .false.
 
  end subroutine growth_init
@@ -93,8 +100,8 @@ contains
   real Growth_LnLike
   integer i,j
   real(dl) z
-  real z_tmp(3), a, growth_rate(WigglezbinN),sigma8_theory(WigglezbinN)
-  real chisq_bin(WigglezbinN), chisq, k_in
+  real z_tmp(3), a, growth_rate(GrowthbinN),sigma8_theory(GrowthbinN)
+  real chisq_bin(GrowthbinN), chisq, k_in
   real diffs(2), step1(2), covmatrix(2,2)
   real z_out, a_tmp(3)
   real delta(3), dd, da, fsig8_theory, delta_0
@@ -111,7 +118,7 @@ contains
   if (do_growth_init) call growth_init
 !  delta_0 = sqrt(MatterPowerAt_Z(T,0.1,0.))
 
-     do i=1, WigglezbinN
+     do i=1, GrowthbinN
         !Obviously this is not v efficient...
         z= growth_z(3*i)
         a = 1.d0/(1.d0+z)
@@ -131,17 +138,21 @@ contains
         fsig8_theory = growth_rate(i)*sigma8_theory(i)
         diffs(1) = fsig8_theory-growth_fsig8(i)
         covmatrix(1,1) = growth_diagerr(i)
-        angdiam = growth_ADD_func(z)
-        hz = growth_H_func(z)
-!        AP_F = angdiam*hz/(growth_D_A_fid(i)*growth_H_z_fid(i))
-        AP_F = angdiam*hz*(1.+z)
-        diffs(2) = AP_F-growth_AP_F(i)
-        covmatrix(2,2) = growth_AP_F_diagerr(i)
-        covmatrix(1,2) = fsig8_AP_corr(i)*sqrt(covmatrix(1,1)*covmatrix(2,2))
-        covmatrix(2,1) = covmatrix(1,2)
-        call Matrix_Inverse(covmatrix)
-        step1 = MATMUL(covmatrix,diffs)
-        chisq_bin(i) = dot_product(diffs,step1)
+        if(growth_AP_F_diagerr(i).ne.0.d0) then ! AP effect degeneracy
+           angdiam = growth_ADD_func(z)
+           hz = growth_H_func(z)
+           !        AP_F = angdiam*hz/(growth_D_A_fid(i)*growth_H_z_fid(i))
+           AP_F = angdiam*hz*(1.+z)
+           diffs(2) = AP_F-growth_AP_F(i)
+           covmatrix(2,2) = growth_AP_F_diagerr(i)
+           covmatrix(1,2) = fsig8_AP_corr(i)*sqrt(covmatrix(1,1)*covmatrix(2,2))
+           covmatrix(2,1) = covmatrix(1,2)
+           call Matrix_Inverse(covmatrix)
+           step1 = MATMUL(covmatrix,diffs)
+           chisq_bin(i) = dot_product(diffs,step1)
+        else
+           chisq_bin(i) = diffs(1)**2/covmatrix(1,1)
+        endif
      end do
 
 
