@@ -88,7 +88,7 @@ contains
 
   
    do_growth_init = .false.
-
+   return
  end subroutine growth_init
 
  function Growth_LnLike(CMB,T)
@@ -117,54 +117,53 @@ contains
   print*, "do growth init", do_growth_init
   if (do_growth_init) call growth_init
 !  delta_0 = sqrt(MatterPowerAt_Z(T,0.1,0.))
-
-     do i=1, GrowthbinN
-        !Obviously this is not v efficient...
-        z= growth_z(3*i)
-        a = 1.d0/(1.d0+z)
-        k_in = 0.1d0/(CMB%H0/100.d0)
-        do j=1,3
-           z_tmp(j) = growth_z(1+((i-1)*3)+j)
-           a_tmp(j) = 1./(1.+z_tmp(j))
-!           delta(j) = sqrt(k_in**2*MatterPowerAt_Z(T,k_in,z_tmp(j)))
-           delta(j) = T%growth_function(1+((i-1)*3)+j)
-!           print*, j, z_tmp(j), z_tmp(j), delta(j)
-        enddo
-        dd = delta(1)-delta(3)
-!        da = (1.d0/(1.d0+(z_tmp(1))))-(1.d0/(1.d0+(z_tmp(3))))
-        da = a_tmp(1) - a_tmp(3)
-        growth_rate(i) = (dd/da)*(a/delta(2))
-        sigma8_theory(i) = T%sigma_8(3*i)
-        fsig8_theory = growth_rate(i)*sigma8_theory(i)
-        diffs(1) = fsig8_theory-growth_fsig8(i)
-        covmatrix(1,1) = growth_diagerr(i)
-        if(growth_AP_F_diagerr(i).ne.0.d0) then ! AP effect degeneracy
-           angdiam = growth_ADD_func(z)
-           hz = growth_H_func(z)
-           !        AP_F = angdiam*hz/(growth_D_A_fid(i)*growth_H_z_fid(i))
-           AP_F = angdiam*hz*(1.+z)
-           diffs(2) = AP_F-growth_AP_F(i)
-           covmatrix(2,2) = growth_AP_F_diagerr(i)
-           covmatrix(1,2) = fsig8_AP_corr(i)*sqrt(covmatrix(1,1)*covmatrix(2,2))
-           covmatrix(2,1) = covmatrix(1,2)
-           call Matrix_Inverse(covmatrix)
-           step1 = MATMUL(covmatrix,diffs)
-           chisq_bin(i) = dot_product(diffs,step1)
-        else
-           chisq_bin(i) = diffs(1)**2/covmatrix(1,1)
-        endif
-     end do
-
-
-     chisq = sum(chisq_bin)
+  if(do_growth_init) print*, "shouldn't be here"
+  do i=1, GrowthbinN
+     !Obviously this is not v efficient...
+     z= growth_z(3*i)
+     a = 1.d0/(1.d0+z)
+     k_in = 0.1d0/(CMB%H0/100.d0)
+     do j=1,3
+        z_tmp(j) = growth_z(1+((i-1)*3)+j)
+        a_tmp(j) = 1./(1.+z_tmp(j))
+        !           delta(j) = sqrt(k_in**2*MatterPowerAt_Z(T,k_in,z_tmp(j)))
+        delta(j) = T%growth_function(1+((i-1)*3)+j)
+     enddo
+     dd = delta(1)-delta(3)
+     !        da = (1.d0/(1.d0+(z_tmp(1))))-(1.d0/(1.d0+(z_tmp(3))))
+     da = a_tmp(1) - a_tmp(3)
+     growth_rate(i) = (dd/da)*(a/delta(2))
+     sigma8_theory(i) = T%sigma_8(3*i)
+     fsig8_theory = growth_rate(i)*sigma8_theory(i)
+     diffs(1) = fsig8_theory-growth_fsig8(i)
+     covmatrix(1,1) = growth_diagerr(i)
+     if(growth_AP_F_diagerr(i).ne.0.d0) then ! AP effect degeneracy
+        angdiam = growth_ADD_func(z)
+        hz = growth_H_func(z)
+        !        AP_F = angdiam*hz/(growth_D_A_fid(i)*growth_H_z_fid(i))
+        AP_F = angdiam*hz*(1.+z)
+        diffs(2) = AP_F-growth_AP_F(i)
+        covmatrix(2,2) = growth_AP_F_diagerr(i)
+        covmatrix(1,2) = fsig8_AP_corr(i)*sqrt(covmatrix(1,1)*covmatrix(2,2))
+        covmatrix(2,1) = covmatrix(1,2)
+        call Matrix_Inverse(covmatrix)
+        step1 = MATMUL(covmatrix,diffs)
+        chisq_bin(i) = dot_product(diffs,step1)
+     else
+        chisq_bin(i) = diffs(1)**2/covmatrix(1,1)
+     endif
+  end do
 
 
+  chisq = sum(chisq_bin)
 
-     Growth_LnLike = chisq/2
-     if (Feedback > 1) write (*,*) 'Growth chisq: ', chisq
 
-!     stop
- end function Growth_LnLike
+
+  Growth_LnLike = chisq/2
+  if (Feedback > 1) write (*,*) 'Growth chisq: ', chisq
+  return
+
+end function Growth_LnLike
 
  function growth_ADD_func(z)
 ! Angular Diameter Distance function for growth of structure module

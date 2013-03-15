@@ -5,8 +5,9 @@ module CMB_Cls
           AccuracyBoost,  Cl_scalar, Cl_tensor, Cl_lensed, outNone, w_lam, &
           CAMBParams_Set, MT, CAMBdata, NonLinear_Pk, Reionization_GetOptDepth, CAMB_GetZreFromTau, &
           CAMB_GetTransfers,CAMB_FreeCAMBdata,CAMB_InitCAMBdata, CAMB_TransfersToPowers, &
-          initial_adiabatic,initial_vector,initial_iso_baryon,initial_iso_neutrino, initial_iso_neutrino_vel
-          
+          initial_adiabatic,initial_vector,initial_iso_baryon,initial_iso_neutrino, initial_iso_neutrino_vel, &
+          HighAccuracyDefault, highL_unlensed_cl_template
+  use Errors !CAMB        
   use settings
   use snovae
   use bao
@@ -31,6 +32,7 @@ module CMB_Cls
   integer, parameter :: ScalClOrder(5) = (/1,3,2,4,5/), TensClOrder(4) = (/1,4,2,3/)
       !Mapping of CAMB CL array ordering to TT , TE, EE, BB, phi, phiT  
   integer :: ncalls = 0
+  integer :: nerrors = 0
   type(CAMBParams)  CAMBP 
   logical :: w_is_w  = .true.
 
@@ -53,8 +55,9 @@ contains
      w_lam = -1
     end if
     if (CMB%nnu < 3.04) call MpiStop('CMBToCAMB: nnu < 3.04, would give negative masless neutrinos')
-    P%Num_Nu_Massless = CMB%nnu - 3.046 !assume three massive
+    P%Num_Nu_Massless = CMB%nnu - 3 !AL Sept 11 for CAMB's new treatment; previously 3.046; we assume three massive
     P%YHe = CMB%YHe
+       
   end subroutine CMBToCAMB
 
  function RecomputeTransfers (A, B)
@@ -100,25 +103,30 @@ contains
          call CAMB_GetTransfers(P, Info%Transfers, error)
          NewTransfers = .true.
          Info%LastParams = CMB
-         if (Use_SN) then
+         if (error==0) then
+          if (Use_SN) then
             Info%Theory%SN_Loglike = SN_LnLike(CMB)
-         else
+          else
             Info%Theory%SN_Loglike = 0     
-         end if  
-         if (Use_BAO) then
+          end if  
+          if (Use_BAO) then
             Info%Theory%BAO_loglike = BAO_LnLike(CMB)
-         else
+          else
             Info%Theory%BAO_loglike = 0
-         end if 
-         if (Use_HST) then
+          end if 
+          if (Use_HST) then
             Info%Theory%HST_Loglike = HST_LnLike(CMB)
-         else
+          else
             Info%Theory%HST_Loglike = 0     
-         end if  
-         
+          end if
+         else
+          if (stop_on_error) call MpiStop('CAMB error '//trim(global_error_message))
+          if (Feedback > 0) write(*,*) 'CAMB returned error '//trim(global_error_message)           
+          nerrors=nerrors+1
+         end if         
          ncalls=ncalls+1
          if (mod(ncalls,100)==0 .and. logfile_unit/=0) then
-          write (logLine,*) 'CAMB called ',ncalls, ' times'
+          write (logLine,*) 'CAMB called ',ncalls, ' times; ', nerrors,' errors'
           call IO_WriteLog(logfile_unit,logLine)
          end if 
          if (Feedback > 1) write (*,*) 'CAMB done'
@@ -131,10 +139,14 @@ contains
       !Always get everything again. Slight waste of time in general, but allows complete mixing of fast
       !parameters, and works with lensing
 
-         call SetCAMBInitPower(Info%Transfers%Params,CMB,1)       
-
+         call SetCAMBInitPower(Info%Transfers%Params,CMB,1)      
+      
          call CAMB_TransfersToPowers(Info%Transfers)
             !this sets slow CAMB params correctly from value stored in Transfers
+         if (global_error_flag/=0) then
+          error=global_error_flag
+          return
+         end if 
            
          call SetTheoryFromCAMB(Info%Theory)
     
@@ -146,9 +158,8 @@ contains
    
          if (Use_LSS) then
             do zix =matter_power_lnzsteps,1,-1
-               print*, zix
                Info%Theory%sigma_8(zix) = Info%Transfers%MTrans%sigma_8(matter_power_lnzsteps-zix+1,1)
-               Info%Theory%growth_function(zix)  = Info%Transfers%MTrans%linear_growth(matter_power_lnzsteps-zix+1,1) 
+               Info%Theory%growth_function(zix) = Info%Transfers%MTrans%linear_growth(matter_power_lnzsteps-zix+1,1)
             enddo
 #ifdef DR71RG 
             !! BR09 get lrgtheory info
@@ -277,7 +288,7 @@ contains
    end if
    
    call CAMB_GetResults(P)
-   error = 0 !using error optional parameter gives seg faults on SGI
+   error = global_error_flag !using error optional parameter gives seg faults on SGI
    if (error==0) then
        
       if (DoCls) then
@@ -287,11 +298,11 @@ contains
       end if
 
 !!BR09 new addition, putting LRGs back here as well, same structure as above.  
-      if (DoPk) then 
-         do zix =matter_power_lnzsteps,1,-1
+      if (DoPk) then
+         do zix=matter_power_lnzsteps,1,-1 
             Theory%sigma_8(zix) = MT%sigma_8(matter_power_lnzsteps-zix+1,1)
-            Theory%growth_function(zix)  = MT%linear_growth(matter_power_lnzsteps-zix+1,1) 
-         enddo
+            Theory%growth_function(zix) = MT%linear_growth(matter_power_lnzsteps-zix+1,1)
+          enddo
 #ifdef DR71RG
          !! BR09 get lrgtheory info
          if (num_matter_power /= 0 .and. use_dr7lrg) then
@@ -411,6 +422,7 @@ contains
 
         P%Max_l=lmax
         P%Max_eta_k=lmax*2
+      
         P%Max_l_tensor=lmax_tensor
         P%Max_eta_k_tensor=lmax_tensor*5./2
  
@@ -425,7 +437,7 @@ contains
         if (Use_Lya) P%Transfer%kmax = lya_kmax
         P%Transfer%num_redshifts = matter_power_lnzsteps
         
-        if (AccuracyLevel > 1) then
+        if (AccuracyLevel > 1 .or. HighAccuracyDefault) then
           if (USE_LSS) then
             P%Transfer%high_precision=.true.
             P%Transfer%kmax=P%Transfer%kmax + 0.2
@@ -440,13 +452,15 @@ contains
           stop 'Need to manually set max_transfer_redshifts larger in CAMB''s modules.f90'
         end if
         if (use_LSS) then
-           redshifts(1) = 0
-           
-           do zix=2, matter_power_lnzsteps
+           do zix=1, matter_power_lnzsteps
+            if (zix==1) then
+             redshifts(1) = 0
+            else
             !Default Linear spacing in log(z+1) if matter_power_lnzsteps > 1           
              redshifts(zix) = exp( log(matter_power_maxz+1) * &
                 real(zix-1)/(max(2,matter_power_lnzsteps)-1) )-1
                !put in max(2,) to stop compilers complaining of div by zero
+            end if
            end do
            
            if (use_mpk) call mpk_SetTransferRedshifts(redshifts) !can modify to use specific redshifts
@@ -457,20 +471,28 @@ contains
             P%Transfer%redshifts(zix) = redshifts(matter_power_lnzsteps-zix+1)
            end do
         else 
+          P%Transfer%num_redshifts = 1
           P%Transfer%redshifts(1) = 0
          end if   
         
-        P%Num_Nu_Massive = 3.046
-        P%Num_Nu_Massless = 0
+        P%Num_Nu_Massive = 3
+        P%Num_Nu_Massless = 0.046
         P%InitPower%nn = 1
         P%AccuratePolarization = num_cls/=1 
         P%Reion%use_optical_depth = .false.
         P%OnlyTransfers = .true.
 
+        if (use_BAO) P%want_zdrag = .true. !JH
+        P%want_zstar = .false. !set to true if you want CAMB to calculate exact z_star
+
         if (CMB_Lensing) then
             P%DoLensing = .true.
-            P%Max_l = lmax +250 + 50 !+50 in case accuracyBoost>1 and so odd l spacing
+            P%Max_l = lmax +100 + 50 !+50 in case accuracyBoost>1 and so odd l spacing
             P%Max_eta_k = P%Max_l*2 
+        end if
+        
+        if (HighAccuracyDefault) then
+         P%Max_eta_k=max(min(P%max_l,3000)*2.5_dl,P%Max_eta_k)
         end if
         
         lensing_includes_tensors = .false.
